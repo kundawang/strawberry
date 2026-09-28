@@ -64,6 +64,12 @@ class BaseGraphQLWSHandler(Generic[Context, RootValue]):
                 async for message in self.websocket.iter_json(
                     ignore_parsing_errors=True
                 ):
+                    if not isinstance(message, dict) or "type" not in message:
+                        # Ignore messages that are not valid operation
+                        # messages, e.g. JSON values like `null`, numbers,
+                        # strings or lists, or objects without a "type" key.
+                        continue
+
                     await self.handle_message(cast("OperationMessage", message))
             except NonTextMessageReceived:
                 await self.websocket.close(

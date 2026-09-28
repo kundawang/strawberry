@@ -553,6 +553,66 @@ async def test_non_json_ws_messages_are_ignored(ws_raw: WebSocketClient):
     assert ws.closed
 
 
+@pytest.mark.parametrize(
+    "invalid_message",
+    [
+        "null",
+        "42",
+        '"a string"',
+        "[1, 2, 3]",
+        "{}",
+        '{"payload": {}}',
+    ],
+)
+async def test_non_operation_ws_messages_are_ignored(
+    ws_raw: WebSocketClient, invalid_message: str
+):
+    """Valid JSON messages that are not operation messages must be ignored.
+
+    Non-object JSON values and objects without a "type" key are not valid
+    protocol messages and should be ignored at every stage of the protocol.
+    """
+    ws = ws_raw
+
+    # Before connection_init
+    await ws.send_text(invalid_message)
+    await ws.send_legacy_message({"type": "connection_init"})
+
+    connection_ack_message: ConnectionAckMessage = await ws.receive_json()
+    assert connection_ack_message["type"] == "connection_ack"
+
+    # After the connection was acknowledged
+    await ws.send_text(invalid_message)
+    await ws.send_legacy_message(
+        {
+            "type": "start",
+            "id": "demo",
+            "payload": {
+                "query": 'subscription { echo(message: "Hi") }',
+            },
+        }
+    )
+
+    data_message = await ws.receive_json()
+    assert data_message["type"] == "data"
+    assert data_message["id"] == "demo"
+    assert data_message["payload"]["data"] == {"echo": "Hi"}
+
+    # While a subscription is active
+    await ws.send_text(invalid_message)
+    await ws.send_legacy_message({"type": "stop", "id": "demo"})
+
+    complete_message: CompleteMessage = await ws.receive_json()
+    assert complete_message["type"] == "complete"
+    assert complete_message["id"] == "demo"
+
+    # After the subscription completed
+    await ws.send_text(invalid_message)
+    await ws.send_legacy_message({"type": "connection_terminate"})
+    await ws.receive(timeout=2)  # receive close
+    assert ws.closed
+
+
 async def test_ws_message_frame_types_cannot_be_mixed(ws_raw: WebSocketClient):
     ws = ws_raw
 
